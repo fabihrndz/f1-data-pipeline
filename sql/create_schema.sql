@@ -93,5 +93,5 @@ CREATE TABLE pit_stops (
         REFERENCES drivers(driver_id)
 );
 
-ALTER TABLE constructors 
-    ADD COLUMN engine_supplier VARCHAR(50);
+ALTER TABLE circuits 
+ADD COLUMN url VARCHAR(255) AFTER lng;
