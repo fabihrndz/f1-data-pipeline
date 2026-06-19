@@ -2,17 +2,20 @@ CREATE SCHEMA f1_data_engine;             -- Creacion y nombre de la base de dat
 
 USE f1_data_engine;
 
-CREATE TABLE circuits (                   -- Creacion de la tabla para registar los circuitos, un id como clave primaria y datos de los circuitos
+--  CIRCUITS
+CREATE TABLE circuits (
     circuit_id VARCHAR(10) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     location VARCHAR(100),
     country VARCHAR(50),
     lat DECIMAL(9,6),
     lng DECIMAL(9,6),
+    url VARCHAR(255),
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE drivers (                         -- Creacion de la tabla para registar a los pilotos, un id como clave primaria y datos de los pilotos
+--  DRIVERS
+CREATE TABLE drivers (
     driver_id VARCHAR(10) PRIMARY KEY,
     first_name VARCHAR(25),
     last_name VARCHAR(25) NOT NULL,
@@ -22,20 +25,23 @@ CREATE TABLE drivers (                         -- Creacion de la tabla para regi
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE constructors (                       -- Creacion de la tabla para registar a los constructores, un id como clave primaria y datos de los constructores
+--  CONSTRUCTORS
+CREATE TABLE constructors (
     constructor_id VARCHAR(10) PRIMARY KEY,
     name VARCHAR(50) NOT NULL,
     nationality VARCHAR(25),
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE status_race (                                 -- Aqui se registra cualquiler incidente en la carrera
-    status_id INT AUTO_INCREMENT PRIMARY KEY,
+--  STATUS_RACE
+CREATE TABLE status_race (
+    status_id INT PRIMARY KEY, 
     status_description VARCHAR(250),
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE races (                                -- Datos de las pistas por fecha y condiciones 
+--  RACES
+CREATE TABLE races (
     race_id VARCHAR(10) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     year_race YEAR,
@@ -44,54 +50,68 @@ CREATE TABLE races (                                -- Datos de las pistas por f
     weather_condition VARCHAR(100),
     circuit_id VARCHAR(10),
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_races_circuits 
-        FOREIGN KEY (circuit_id)
-        REFERENCES circuits(circuit_id)
-    ON DELETE RESTRICT
+    CONSTRAINT fk_races_circuits FOREIGN KEY (circuit_id) REFERENCES circuits(circuit_id) ON DELETE RESTRICT
 );
 
-CREATE TABLE results (                                      -- Tabla para almacenar los resultados detallados, con foreign keys para conectar con el resto de tablas
+--  RESULTS 
+CREATE TABLE results (
     result_id INT AUTO_INCREMENT PRIMARY KEY,
     race_id VARCHAR(10),
     driver_id VARCHAR(10),
     constructor_id VARCHAR(10),
     status_id INT,
-    grip_position SMALLINT,
-    final_position SMALLINT,
+    grip_position SMALLINT,       -- Posición en parrilla (grid)
+    final_position SMALLINT,      -- Posición final
     points DECIMAL(5,2) DEFAULT 0.0,
-    fastest_lap_time TIME,
+    laps INT,                     -- Vueltas completadas
+    fastest_lap_rank SMALLINT,    -- Posición de su vuelta rápida en la carrera
+    fastest_lap_time VARCHAR(10), 
     is_podium BOOLEAN DEFAULT FALSE,
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_races_results
-        FOREIGN KEY (race_id)
-        REFERENCES races(race_id),
-    CONSTRAINT fk_drivers_results
-        FOREIGN KEY (driver_id)
-        REFERENCES drivers(driver_id),
-    CONSTRAINT fk_constructors_results
-        FOREIGN KEY (constructor_id)
-        REFERENCES constructors(constructor_id),
-    CONSTRAINT fk_status_results
-        FOREIGN KEY (status_id)
-        REFERENCES status_race(status_id)
-    ON DELETE RESTRICT 
+    CONSTRAINT fk_races_results FOREIGN KEY (race_id) REFERENCES races(race_id),
+    CONSTRAINT fk_drivers_results FOREIGN KEY (driver_id) REFERENCES drivers(driver_id),
+    CONSTRAINT fk_constructors_results FOREIGN KEY (constructor_id) REFERENCES constructors(constructor_id),
+    CONSTRAINT fk_status_results FOREIGN KEY (status_id) REFERENCES status_race(status_id) ON DELETE RESTRICT
 );
 
+--  PIT_STOPS 
 CREATE TABLE pit_stops (
-    pit_id INT AUTO_INCREMENT PRIMARY KEY
+    pit_id INT AUTO_INCREMENT PRIMARY KEY,
     race_id VARCHAR(10),
     driver_id VARCHAR(10),
     stop_number INT,
     lap INT,
     duration DECIMAL(6,3),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_pitstops_races 
-        FOREIGN KEY (race_id) 
-        REFERENCES races(race_id),
-    CONSTRAINT fk_pitstops_drivers
-        FOREIGN KEY (driver_id)
-        REFERENCES drivers(driver_id)
+    CONSTRAINT fk_pitstops_races FOREIGN KEY (race_id) REFERENCES races(race_id),
+    CONSTRAINT fk_pitstops_drivers FOREIGN KEY (driver_id) REFERENCES drivers(driver_id)
 );
 
-ALTER TABLE circuits 
-ADD COLUMN url VARCHAR(255) AFTER lng;
+--  QUALIFYING
+CREATE TABLE qualifying (
+    qualifying_id INT AUTO_INCREMENT PRIMARY KEY,
+    race_id VARCHAR(10),
+    driver_id VARCHAR(10),
+    constructor_id VARCHAR(10),
+    position SMALLINT,            -- Posición final en clasificación
+    q1 VARCHAR(10),               -- Tiempo en Q1 
+    q2 VARCHAR(10),               -- Tiempo en Q2
+    q3 VARCHAR(10),               -- Tiempo en Q3
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_qualifying_races FOREIGN KEY (race_id) REFERENCES races(race_id),
+    CONSTRAINT fk_qualifying_drivers FOREIGN KEY (driver_id) REFERENCES drivers(driver_id),
+    CONSTRAINT fk_qualifying_constructors FOREIGN KEY (constructor_id) REFERENCES constructors(constructor_id)
+);
+
+--  LAP_TIMES 
+CREATE TABLE lap_times (
+    lap_time_id INT AUTO_INCREMENT PRIMARY KEY,
+    race_id VARCHAR(10),
+    driver_id VARCHAR(10),
+    lap INT,                      -- Número de vuelta
+    position SMALLINT,            -- Posición en esa vuelta específica
+    lap_duration VARCHAR(10),     -- Tiempo de la vuelta 
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_laptimes_races FOREIGN KEY (race_id) REFERENCES races(race_id),
+    CONSTRAINT fk_laptimes_drivers FOREIGN KEY (driver_id) REFERENCES drivers(driver_id)
+);
