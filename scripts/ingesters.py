@@ -141,61 +141,63 @@ if __name__ == "__main__":
 #CIRCUITS
 
 def ingest_all_circuits():
-
-    try:                                #Intenta conectar con SQL 
+    try:
         conexion = db_connection()
         cursor = conexion.cursor()
     except Exception as e:
         print(f"❌ Error de conexión: {e}")
         return
 
+    año_actual = datetime.now().year
     total_new = 0
+    print(f"🚀 Descargando circuitos históricos año por año (1950 - {año_actual})...")
 
-    print("🚀 Iniciando descarga de la historia de la F1...")
-
-    url = f"https://api.jolpi.ca/ergast/f1/circuits?limit=200"
-    response = requests.get(url)            #Llamada a la API
+    # Recorre año por año para capturar los circuitos exactos de cada época
+    for year in range(1950, año_actual + 1):
+        url = f"https://api.jolpi.ca/ergast/f1/{year}/circuits.json?limit=100"
+        response = requests.get(url)
         
-    if response.status_code != 200:
-        return                                #Para el bucle si no se hace bien la llamada
+        if response.status_code != 200:
+            continue
             
-    data = response.json()
-    circuits = data['MRData']['CircuitTable']['Circuits']     #Ubicacion de los circuitos en el Json
+        data = response.json()
+        circuits = data['MRData']['CircuitTable']['Circuits']
         
-    if not circuits: # Si ya no hay circuitos en la lista, salimos del bucle
-        return
-                     
-                     #Query de insercion
-    sql = """
-        INSERT IGNORE INTO circuits 
-        (circuit_id, name, location, country, lat, lng, url)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """
-        
-    for c in circuits:           #datos del Json que necesito
-            #.get  devuelve None si el campo no existe, evitando el KeyError
-        valores = (
-            c.get('circuitId'),
-            c.get('circuitName'),
-            c.get('Location', {}).get('locality'),
-            c.get('Location', {}).get('country'),
-            c.get('Location', {}).get('lat'),
-            c.get('Location', {}).get('long'),
-            c.get('url')
-        )
-            
-            # Solo inserta si al menos tenemos el ID del circuito
-        if valores[0]:
-            cursor.execute(sql, valores)
-            total_new += cursor.rowcount
+        if not circuits:
+            continue
 
-    conexion.commit()
-    print(f"🏁 ¡Hecho! Tienes {total_new} circuitos históricos en tu base de datos.")
+        sql = """
+            INSERT IGNORE INTO circuits 
+            (circuit_id, name, location, country, lat, lng, url)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        for c in circuits:
+            valores = (
+                c.get('circuitId'),
+                c.get('circuitName'),
+                c.get('Location', {}).get('locality'),
+                c.get('Location', {}).get('country'),
+                c.get('Location', {}).get('lat'),
+                c.get('Location', {}).get('long'),
+                c.get('url')
+            )
+            
+            if valores[0]:
+                cursor.execute(sql, valores)
+                total_new += cursor.rowcount
+
+        conexion.commit()
+        # Imprime solo cada 10 años para no llenar la pantalla de texto
+        if year % 10 == 0 or year == año_actual:
+            print(f"📥 Estado: Procesados circuitos hasta el año {year}...")
+        
+        time.sleep(0.2) # Pausa para no saturar la API
+
+    print(f"🏁 ¡Hecho! Se han añadido {total_new} circuitos históricos.")
     cursor.close()
     conexion.close()
 
-if __name__ == "__main__":
-    ingest_all_circuits()
 
 # RACES
 
@@ -266,3 +268,60 @@ def ingest_all_races():
 
 if __name__ == "__main__":
     ingest_all_races()
+
+
+    # STATUS
+
+def ingest_all_statuses():
+    try:
+        conexion = db_connection()
+        cursor = conexion.cursor()
+    except Exception as e:
+        print(f"❌ Error de conexión: {e}")
+        return
+
+    limit = 100
+    offset = 0
+    total_new = 0
+
+    print("🚀 Descargando todos los estados de carreras.")
+
+    while True:
+        url = f"https://api.jolpi.ca/ergast/f1/status.json?limit={limit}&offset={offset}"
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            break
+            
+        data = response.json()
+        status_list = data['MRData']['StatusTable']['Status']
+        
+        # Si ya no hay mas estados en esa pagina, rompe el bucle
+        if not status_list:
+            break
+
+        sql = """
+            INSERT IGNORE INTO status_race (status_id, status_description)
+            VALUES (%s, %s)
+        """
+        
+        for s in status_list:
+            valores = (
+                s.get('statusId'),
+                s.get('status')
+            )
+            if valores[0]:
+                cursor.execute(sql, valores)
+                total_new += cursor.rowcount
+
+        conexion.commit()
+        print(f"📥 Procesados {offset + len(status_list)} estados...")
+        
+        # Avanzamos los siguientes 100
+        offset += limit
+        time.sleep(0.3)
+
+    print(f"🏁 ¡Hecho! Tienes {total_new} estados guardados en tu base de datos.")
+    cursor.close()
+    conexion.close()
+
