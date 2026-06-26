@@ -192,7 +192,7 @@ def ingest_all_circuits():
         if year % 10 == 0 or year == año_actual:
             print(f"📥 Estado: Procesados circuitos hasta el año {year}...")
         
-        time.sleep(0.2) # Pausa para no saturar la API
+        time.sleep(0.5) # Pausa para no saturar la API
 
     print(f"🏁 ¡Hecho! Se han añadido {total_new} circuitos históricos.")
     cursor.close()
@@ -222,6 +222,8 @@ def ingest_all_races():
         
         if response.status_code != 200:
             print(f"⚠️ No se pudieron obtener datos del año {year}. Saltando...")
+            print(f"⚠️ API respondió con código {response.status_code}. No se pudo cargar este bloque.")
+            time.sleep(3.0)
             continue
             
         data = response.json()
@@ -260,7 +262,7 @@ def ingest_all_races():
         conexion.commit()
         print(f"📥 Temporada {year} procesada con éxito.")
         
-        time.sleep(0.3)
+        time.sleep(1.5)
 
     print(f"🏁 ¡Historial completo! Se han añadido {total_new} nuevas carreras a la base de datos.")
     cursor.close()
@@ -325,3 +327,86 @@ def ingest_all_statuses():
     cursor.close()
     conexion.close()
 
+    # RESULTS
+
+def ingest_all_results():
+    try:
+        conexion = db_connection()
+        cursor = conexion.cursor()
+    except Exception as e:
+        print(f"❌ Error de conexión: {e}")
+        return
+
+    print("🔍 Consultando las carreras almacenadas en la base de datos...")
+    cursor.execute("SELECT year_race, round, race_id FROM races ORDER BY year_race ASC, round ASC")
+    carreras_en_db = cursor.fetchall()
+
+    if not carreras_en_db:
+        print("⚠️ No hay carreras en la tabla 'races'.")
+        cursor.close()
+        conexion.close()
+        return
+
+    total_new = 0
+    print(f"🚀 Descargando resultados para {len(carreras_en_db)} carreras...")
+
+    for year, round_num, race_id in carreras_en_db:
+        url = f"https://api.jolpi.ca/ergast/f1/{year}/{round_num}/results.json"
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            continue
+            
+        data = response.json()
+        races_list = data['MRData']['RaceTable']['Races']
+        if not races_list:
+            continue
+            
+        results = races_list[0]['Results']
+        
+        sql = """
+            INSERT IGNORE INTO results 
+            (race_id, driver_id, constructor_id, status_id, grip_position, final_position, points, laps, fastest_lap_rank, fastest_lap_time, is_podium)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        for r in results:
+            driver_id = r.get('Driver', {}).get('driverId')
+            constructor_id = r.get('Constructor', {}).get('constructorId')
+            status_id = int(r.get('statusId', 0))
+            grip_position = int(r.get('grid', 0))
+            
+            try:
+                final_position = int(r.get('position', 0))
+            except (ValueError, TypeError):
+                final_position = None
+                
+            points = float(r.get('points', 0))
+            laps = int(r.get('laps', 0))
+            
+            fastest_lap_info = r.get('FastestLap', {})
+            try:
+                fastest_lap_rank = int(fastest_lap_info.get('rank', 0))
+            except (ValueError, TypeError):
+                fastest_lap_rank = None
+                
+            fastest_lap_time = fastest_lap_info.get('Time', {}).get('time') 
+            is_podium = True if final_position in [1, 2, 3] else False
+
+            valores = (
+                race_id, driver_id, constructor_id, status_id,
+                grip_position, final_position, points, laps,
+                fastest_lap_rank, fastest_lap_time, is_podium
+            )
+            
+            if valores[0] and valores[1] and valores[2]:
+                cursor.execute(sql, valores)
+                total_new += cursor.rowcount
+                
+        conexion.commit()
+        print(f"📥 Resultados guardados: {race_id}")
+        time.sleep(1.0)
+
+    print(f"🏁 ¡Hecho! Se han añadido {total_new} filas a 'results'.")
+    cursor.close()
+    conexion.close()
