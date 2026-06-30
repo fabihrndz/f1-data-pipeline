@@ -4,7 +4,7 @@ USE f1_data_engine;
 
 --  CIRCUITS
 CREATE TABLE circuits (
-    circuit_id VARCHAR(10) PRIMARY KEY,
+    circuit_id VARCHAR(50) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     location VARCHAR(100),
     country VARCHAR(50),
@@ -16,7 +16,7 @@ CREATE TABLE circuits (
 
 --  DRIVERS
 CREATE TABLE drivers (
-    driver_id VARCHAR(10) PRIMARY KEY,
+    driver_id VARCHAR(50) PRIMARY KEY,
     first_name VARCHAR(25),
     last_name VARCHAR(25) NOT NULL,
     nationality VARCHAR(25),
@@ -27,7 +27,7 @@ CREATE TABLE drivers (
 
 --  CONSTRUCTORS
 CREATE TABLE constructors (
-    constructor_id VARCHAR(10) PRIMARY KEY,
+    constructor_id VARCHAR(50) PRIMARY KEY,
     name VARCHAR(50) NOT NULL,
     nationality VARCHAR(25),
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -42,13 +42,13 @@ CREATE TABLE status_race (
 
 --  RACES
 CREATE TABLE races (
-    race_id VARCHAR(10) PRIMARY KEY,
+    race_id VARCHAR(50) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     year_race YEAR,
     round INT,
     race_date DATE,
     weather_condition VARCHAR(100),
-    circuit_id VARCHAR(10),
+    circuit_id VARCHAR(50),
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_races_circuits FOREIGN KEY (circuit_id) REFERENCES circuits(circuit_id) ON DELETE RESTRICT
 );
@@ -56,9 +56,9 @@ CREATE TABLE races (
 --  RESULTS 
 CREATE TABLE results (
     result_id INT AUTO_INCREMENT PRIMARY KEY,
-    race_id VARCHAR(10),
-    driver_id VARCHAR(10),
-    constructor_id VARCHAR(10),
+    race_id VARCHAR(50),
+    driver_id VARCHAR(50),
+    constructor_id VARCHAR(50),
     status_id INT,
     grip_position SMALLINT,       -- Posición en parrilla (grid)
     final_position SMALLINT,      -- Posición final
@@ -77,8 +77,8 @@ CREATE TABLE results (
 --  PIT_STOPS 
 CREATE TABLE pit_stops (
     pit_id INT AUTO_INCREMENT PRIMARY KEY,
-    race_id VARCHAR(10),
-    driver_id VARCHAR(10),
+    race_id VARCHAR(50),
+    driver_id VARCHAR(50),
     stop_number INT,
     lap INT,
     duration DECIMAL(6,3),
@@ -90,9 +90,9 @@ CREATE TABLE pit_stops (
 --  QUALIFYING
 CREATE TABLE qualifying (
     qualifying_id INT AUTO_INCREMENT PRIMARY KEY,
-    race_id VARCHAR(10),
-    driver_id VARCHAR(10),
-    constructor_id VARCHAR(10),
+    race_id VARCHAR(50),
+    driver_id VARCHAR(50),
+    constructor_id VARCHAR(50),
     position SMALLINT,            -- Posición final en clasificación
     q1 VARCHAR(10),               -- Tiempo en Q1 
     q2 VARCHAR(10),               -- Tiempo en Q2
