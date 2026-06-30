@@ -95,7 +95,6 @@ def ingest_all_constructors():
         if not constructors: 
             break
                      
-        # Eliminamos el IGNORE. Usamos ON DUPLICATE KEY para actualizar si el ID ya existe
         sql = """
             INSERT INTO constructors (constructor_id, name, nationality)
             VALUES (%s, %s, %s)
@@ -152,11 +151,10 @@ def ingest_all_circuits():
         data = response.json()
         circuits = data['MRData']['CircuitTable']['Circuits']
         
-        # Si la página actual viene vacía, significa que ya procesamos todos los circuitos
+        # Si la pagina actual viene vacia, significa que ya proceso todos los circuitos
         if not circuits:
             break
 
-        # Query estricta con ON DUPLICATE KEY UPDATE
         sql = """
             INSERT INTO circuits (circuit_id, name, location, country, lat, lng, url)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -185,9 +183,9 @@ def ingest_all_circuits():
         conexion.commit()
         print(f"📥 Pasada completada: Procesados circuitos desde el offset {offset} al {offset + len(circuits)}")
         
-        # Avanzamos al siguiente bloque de 100
+        # Avanza al siguiente bloque de 100
         offset += limit
-        time.sleep(1.5) # Respiro para cumplir las políticas de la API
+        time.sleep(1.5) # Respiro para cumplir las politicas de la API
 
     cursor.close()
     conexion.close()
@@ -224,7 +222,6 @@ def ingest_all_races():
         if not races:
             continue
 
-        # Eliminamos el IGNORE. Usamos ON DUPLICATE KEY UPDATE para ser estrictos
         sql = """
             INSERT INTO races (race_id, name, year_race, round, race_date, circuit_id)
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -247,7 +244,7 @@ def ingest_all_races():
                 r.get('Circuit', {}).get('circuitId')  
             )
             
-            # Forzamos la inserción estricta si viene el ID del circuito
+            # Inserción si viene el ID del circuito
             if valores[5]:
                 cursor.execute(sql, valores)
                 total_new += 1
@@ -291,7 +288,6 @@ def ingest_all_statuses():
         if not status_list:
             break
 
-        # Eliminamos el IGNORE. Usamos ON DUPLICATE KEY UPDATE para ser estrictos
         sql = """
             INSERT INTO status_race (status_id, status_description)
             VALUES (%s, %s)
@@ -301,7 +297,7 @@ def ingest_all_statuses():
         
         for s in status_list:
             try:
-                # Nos aseguramos de pasar el ID como un entero limpio para MySQL
+                # ID como un entero limpio para MySQL
                 status_id = int(s.get('statusId'))
                 status_desc = s.get('status')
                 
@@ -334,16 +330,16 @@ def ingest_all_results():
         print(f"❌ Error de conexión: {e}")
         return
 
-    # 1️⃣ DETECTAR PROGRESO: Averiguar qué carreras ya procesamos antes del bloqueo
+    # Averigua que carreras ya proceso
     print("🔍 Comprobando progreso previo en la base de datos...")
     cursor.execute("SELECT DISTINCT race_id FROM results")
-    carreras_procesadas = {row[0] for row in cursor.fetchall()} # Guardamos en un set para búsqueda rápida
+    carreras_procesadas = {row[0] for row in cursor.fetchall()} # Guarda en un set para busqueda rapida
     
-    # 2️⃣ TRAER TODAS LAS CARRERAS PLANIFICADAS
+    # Trae las carreras
     cursor.execute("SELECT year_race, round, race_id FROM races ORDER BY year_race ASC, round ASC")
     todas_las_carreras = cursor.fetchall()
     
-    # 3️⃣ FILTRAR: Dejar solo las carreras que faltan por descargar
+    # Deja solo las carreras que faltan por descargar
     carreras_pendientes = [c for c in todas_las_carreras if c[2] not in carreras_procesadas]
     
     print(f"📊 Estado actual del pipeline:")
@@ -385,7 +381,7 @@ def ingest_all_results():
             
             if response.status_code == 429:
                 reintentos_429 += 1
-                # Si se queda atascado muchas veces, aumentamos drásticamente el tiempo de espera
+                # Si se queda atascado muchas veces, aumentamos el tiempo de espera
                 tiempo_espera = 30.0 if reintentos_429 < 3 else 60.0
                 print(f"🛑 Bloqueo 429 en {race_id} (Intento {reintentos_429}). Enfriando por {tiempo_espera}s...")
                 time.sleep(tiempo_espera)
@@ -455,16 +451,16 @@ def ingest_qualifying():
         print(f"❌ Error de conexión en qualifying: {e}")
         return
 
-    # 1️⃣ DETECTAR PROGRESO: Evitar duplicar llamadas si el script se frena
+    # Evitar duplicar llamadas si el script se frena
     print("🔍 Comprobando progreso previo en la tabla qualifying...")
     cursor.execute("SELECT DISTINCT race_id FROM qualifying")
     carreras_procesadas = {row[0] for row in cursor.fetchall()}
     
-    # 2️⃣ TRAER TODAS LAS CARRERAS PLANIFICADAS
+    # # Traer las carreras
     cursor.execute("SELECT year_race, round, race_id FROM races ORDER BY year_race ASC, round ASC")
     todas_las_carreras = cursor.fetchall()
     
-    # 3️⃣ FILTRAR: Quedarnos solo con las carreras que faltan por descargar
+    # Solo con las carreras que faltan por descargar
     carreras_pendientes = [c for c in todas_las_carreras if c[2] not in carreras_procesadas]
     
     print(f"📊 Estado del pipeline de Clasificación:")
@@ -505,7 +501,7 @@ def ingest_qualifying():
         while True:
             response = requests.get(url, headers=headers)
             
-            # Control inteligente del Error 429
+            # Control del Error 429
             if response.status_code == 429:
                 reintentos_429 += 1
                 if reintentos_429 > 3:
@@ -519,12 +515,12 @@ def ingest_qualifying():
                 time.sleep(tiempo_espera)
                 continue 
                 
-            # Control de otros errores (404, 500, etc.)
+            # Control de otros errores
             if response.status_code != 200:
                 print(f"⚠️ Error en clasificación {race_id}. Código: {response.status_code}. Pasando...")
                 break 
                 
-            # Si el código es 200, procesamos el JSON
+            # Si el codigo es 200, procesamos el JSON
             data = response.json()
             try:
                 races_list = data['MRData']['RaceTable']['Races']
@@ -558,7 +554,7 @@ def ingest_qualifying():
             print(f"📥 Clasificación guardada: {race_id}")
             break 
 
-        # Si se activó la parada de emergencia por bloqueo IP, rompemos el bucle principal
+        # Si se activa la parada de emergencia por bloqueo IP, rompemos el bucle principal
         if abortar_por_bloqueo:
             break
 
@@ -569,3 +565,127 @@ def ingest_qualifying():
     conexion.close()
     print(f"\n🏁 Sesión de clasificación terminada. Registros añadidos en esta tanda: {total_procesados}")
 
+
+# PIT STOPS
+
+def ingest_pit_stops():
+    try:
+        conexion = db_connection()
+        cursor = conexion.cursor()
+    except Exception as e:
+        print(f"❌ Error de conexión en pit_stops: {e}")
+        return
+
+    # Ver que carreras ya tienen sus paradas registradas
+    print("🔍 Comprobando progreso previo en la tabla pit_stops...")
+    cursor.execute("SELECT DISTINCT race_id FROM pit_stops")
+    carreras_procesadas = {row[0] for row in cursor.fetchall()}
+    
+    # Traer carreras
+    cursor.execute("SELECT year_race, round, race_id FROM races ORDER BY year_race ASC, round ASC")
+    todas_las_carreras = cursor.fetchall()
+    
+    # Procesar solo lo que falta
+    carreras_pendientes = [c for c in todas_las_carreras if c[2] not in carreras_procesadas]
+    
+    print(f"📊 Estado del pipeline de Pit Stops:")
+    print(f"   - Carreras ya guardadas en pit_stops: {len(carreras_procesadas)}")
+    print(f"   - Carreras pendientes por descargar: {len(carreras_pendientes)}")
+    
+    if not carreras_pendientes:
+        print("🏁 ¡Todo listo! La tabla pit_stops ya está completamente sincronizada.")
+        cursor.close()
+        conexion.close()
+        return
+
+    total_procesados = 0
+    
+    sql = """
+        INSERT INTO pit_stops 
+        (race_id, driver_id, stop_number, lap, duration)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE 
+            lap = VALUES(lap),
+            duration = VALUES(duration);
+    """
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    for year, round_num, race_id in carreras_pendientes:
+        
+        url = f"https://api.jolpi.ca/ergast/f1/{year}/{round_num}/pitstops.json?limit=100"
+        
+        reintentos_429 = 0
+        abortar_por_bloqueo = False
+        
+        while True:
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 429:
+                reintentos_429 += 1
+                if reintentos_429 > 3:
+                    print(f"\n🚨 La API ha bloqueado nuestra IP de forma prolongada en pit_stops ({race_id}).")
+                    print("🛑 Deteniendo el script de forma segura. ¡Progreso a salvo!")
+                    abortar_por_bloqueo = True
+                    break 
+                
+                tiempo_espera = 30.0 if reintentos_429 < 2 else 60.0
+                print(f"🛑 Bloqueo 429 en pit_stops {race_id} (Intento {reintentos_429}/3). Enfriando por {tiempo_espera}s...")
+                time.sleep(tiempo_espera)
+                continue 
+                
+            if response.status_code != 200:
+                print(f"⚠️ Error en pit_stops {race_id}. Código: {response.status_code}. Pasando...")
+                break 
+                
+            data = response.json()
+            try:
+                races_list = data['MRData']['RaceTable']['Races']
+                if not races_list:
+                    # Imprime informativo para años anteriores a 2011
+                    if int(year) < 2011:
+                        print(f"ℹ️ Sin registro histórico de pit stops para: {race_id}")
+                    else:
+                        print(f"ℹ️ No se encontraron datos de pit stops en la API para: {race_id}")
+                    break
+                
+                pit_stops_list = races_list[0].get('PitStops', [])
+            except (KeyError, IndexError):
+                print(f"⚠️ Estructura inesperada en pit_stops: {race_id}")
+                break
+
+            for p in pit_stops_list:
+                try:
+                    stop_num = int(p.get('stop', 0))
+                    lap_num = int(p.get('lap', 0))
+                    # Limpieza por si la API trae guiones o textos en la duración
+                    duracion_str = p.get('duration', '').replace(':', '') # Quitar formatos raros de minutos si los hubiera
+                    duracion = float(duracion_str) if duracion_str else None
+                except (ValueError, TypeError):
+                    duracion = None
+
+                valores = (
+                    race_id,
+                    p.get('driverId'),
+                    stop_num,
+                    lap_num,
+                    duracion
+                )
+                cursor.execute(sql, valores)
+                total_procesados += 1
+                    
+            conexion.commit() 
+            print(f"📥 Pit Stops guardados: {race_id} ({len(pit_stops_list)} paradas)")
+            break 
+
+        if abortar_por_bloqueo:
+            break
+
+        # Pausa para cuidar la IP
+        time.sleep(3.5)
+
+    cursor.close()
+    conexion.close()
+    print(f"\n🏁 Ingesta de Pit Stops finalizada. Registros añadidos: {total_procesados}")

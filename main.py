@@ -1,3 +1,3 @@
 from scripts import ingesters as ig
 
-ig.ingest_qualifying()
+ig.ingest_pit_stops()
