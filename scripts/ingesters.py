@@ -576,116 +576,86 @@ def ingest_pit_stops():
         print(f"❌ Error de conexión en pit_stops: {e}")
         return
 
-    # Ver que carreras ya tienen sus paradas registradas
-    print("🔍 Comprobando progreso previo en la tabla pit_stops...")
+    # 1️⃣ DETECTAR PROGRESO
     cursor.execute("SELECT DISTINCT race_id FROM pit_stops")
     carreras_procesadas = {row[0] for row in cursor.fetchall()}
     
-    # Traer carreras
-    cursor.execute("SELECT year_race, round, race_id FROM races ORDER BY year_race ASC, round ASC")
+    # 2️⃣ TRAER CARRERAS FILTRADAS (Solo desde 2010 por diseño eficiente)
+    cursor.execute("""
+        SELECT year_race, round, race_id 
+        FROM races 
+        WHERE year_race >= 2010 
+        ORDER BY year_race ASC, round ASC
+    """)
     todas_las_carreras = cursor.fetchall()
     
-    # Procesar solo lo que falta
+    # 3️⃣ FILTRAR PENDIENTES
     carreras_pendientes = [c for c in todas_las_carreras if c[2] not in carreras_procesadas]
     
-    print(f"📊 Estado del pipeline de Pit Stops:")
-    print(f"   - Carreras ya guardadas en pit_stops: {len(carreras_procesadas)}")
-    print(f"   - Carreras pendientes por descargar: {len(carreras_pendientes)}")
+    print(f"📊 Pipeline Pit Stops Optimizado (Filtro >= 2010):")
+    print(f"   - Carreras pendientes: {len(carreras_pendientes)}")
     
     if not carreras_pendientes:
-        print("🏁 ¡Todo listo! La tabla pit_stops ya está completamente sincronizada.")
+        print("🏁 ¡Tabla pit_stops sincronizada!")
         cursor.close()
         conexion.close()
         return
 
-    total_procesados = 0
-    
     sql = """
-        INSERT INTO pit_stops 
-        (race_id, driver_id, stop_number, lap, duration)
+        INSERT INTO pit_stops (race_id, driver_id, stop_number, lap, duration)
         VALUES (%s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE 
-            lap = VALUES(lap),
-            duration = VALUES(duration);
+        ON DUPLICATE KEY UPDATE lap = VALUES(lap), duration = VALUES(duration);
     """
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
     for year, round_num, race_id in carreras_pendientes:
-        
         url = f"https://api.jolpi.ca/ergast/f1/{year}/{round_num}/pitstops.json?limit=100"
         
-        reintentos_429 = 0
-        abortar_por_bloqueo = False
-        
-        while True:
+        try:
             response = requests.get(url, headers=headers)
-            
-            if response.status_code == 429:
-                reintentos_429 += 1
-                if reintentos_429 > 3:
-                    print(f"\n🚨 La API ha bloqueado nuestra IP de forma prolongada en pit_stops ({race_id}).")
-                    print("🛑 Deteniendo el script de forma segura. ¡Progreso a salvo!")
-                    abortar_por_bloqueo = True
-                    break 
-                
-                tiempo_espera = 30.0 if reintentos_429 < 2 else 60.0
-                print(f"🛑 Bloqueo 429 en pit_stops {race_id} (Intento {reintentos_429}/3). Enfriando por {tiempo_espera}s...")
-                time.sleep(tiempo_espera)
-                continue 
-                
-            if response.status_code != 200:
-                print(f"⚠️ Error en pit_stops {race_id}. Código: {response.status_code}. Pasando...")
-                break 
-                
-            data = response.json()
-            try:
-                races_list = data['MRData']['RaceTable']['Races']
-                if not races_list:
-                    # Imprime informativo para años anteriores a 2011
-                    if int(year) < 2011:
-                        print(f"ℹ️ Sin registro histórico de pit stops para: {race_id}")
-                    else:
-                        print(f"ℹ️ No se encontraron datos de pit stops en la API para: {race_id}")
-                    break
-                
-                pit_stops_list = races_list[0].get('PitStops', [])
-            except (KeyError, IndexError):
-                print(f"⚠️ Estructura inesperada en pit_stops: {race_id}")
-                break
-
-            for p in pit_stops_list:
-                try:
-                    stop_num = int(p.get('stop', 0))
-                    lap_num = int(p.get('lap', 0))
-                    # Limpieza por si la API trae guiones o textos en la duración
-                    duracion_str = p.get('duration', '').replace(':', '') # Quitar formatos raros de minutos si los hubiera
-                    duracion = float(duracion_str) if duracion_str else None
-                except (ValueError, TypeError):
-                    duracion = None
-
-                valores = (
-                    race_id,
-                    p.get('driverId'),
-                    stop_num,
-                    lap_num,
-                    duracion
-                )
-                cursor.execute(sql, valores)
-                total_procesados += 1
-                    
-            conexion.commit() 
-            print(f"📥 Pit Stops guardados: {race_id} ({len(pit_stops_list)} paradas)")
-            break 
-
-        if abortar_por_bloqueo:
+        except Exception as e:
+            print(f"⚠️ Error de red en {race_id}: {e}")
+            continue
+        
+        if response.status_code == 429:
+            print(f"🚨 Bloqueo 429 en {race_id}. Deteniendo para proteger IP.")
             break
+            
+        if response.status_code != 200:
+            continue
+            
+        data = response.json()
+        try:
+            races_list = data['MRData']['RaceTable']['Races']
+            if not races_list:
+                continue
+            pit_stops_list = races_list[0].get('PitStops', [])
+        except (KeyError, IndexError):
+            continue
 
-        # Pausa para cuidar la IP
+        for p in pit_stops_list:
+            try:
+                duracion_str = p.get('duration', '').replace(':', '')
+                duracion = float(duracion_str) if duracion_str else None
+                
+                # Validación defensiva avanzada para evitar desbordamientos en la BD
+                if duracion and duracion > 99999.999:
+                    duracion = None
+            except (ValueError, TypeError):
+                duracion = None
+
+            try:
+                cursor.execute(sql, (race_id, p.get('driverId'), int(p.get('stop', 0)), int(p.get('lap', 0)), duracion))
+            except Exception as e:
+                print(f"❌ Error al insertar parada en {race_id}: {e}")
+                continue
+                
+        conexion.commit()
+        if pit_stops_list:
+            print(f"📥 Guardados Pit Stops: {race_id} ({len(pit_stops_list)} paradas)")
+        
         time.sleep(3.5)
 
     cursor.close()
     conexion.close()
-    print(f"\n🏁 Ingesta de Pit Stops finalizada. Registros añadidos: {total_procesados}")

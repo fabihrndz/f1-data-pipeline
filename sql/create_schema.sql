@@ -81,7 +81,7 @@ CREATE TABLE pit_stops (
     driver_id VARCHAR(50),
     stop_number INT,
     lap INT,
-    duration DECIMAL(6,3),
+    duration DECIMAL(8,3),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_pitstops_races FOREIGN KEY (race_id) REFERENCES races(race_id),
     CONSTRAINT fk_pitstops_drivers FOREIGN KEY (driver_id) REFERENCES drivers(driver_id)
@@ -101,17 +101,4 @@ CREATE TABLE qualifying (
     CONSTRAINT fk_qualifying_races FOREIGN KEY (race_id) REFERENCES races(race_id),
     CONSTRAINT fk_qualifying_drivers FOREIGN KEY (driver_id) REFERENCES drivers(driver_id),
     CONSTRAINT fk_qualifying_constructors FOREIGN KEY (constructor_id) REFERENCES constructors(constructor_id)
-);
-
---  LAP_TIMES 
-CREATE TABLE lap_times (
-    lap_time_id INT AUTO_INCREMENT PRIMARY KEY,
-    race_id VARCHAR(10),
-    driver_id VARCHAR(10),
-    lap INT,                      -- Número de vuelta
-    position SMALLINT,            -- Posición en esa vuelta específica
-    lap_duration VARCHAR(10),     -- Tiempo de la vuelta 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_laptimes_races FOREIGN KEY (race_id) REFERENCES races(race_id),
-    CONSTRAINT fk_laptimes_drivers FOREIGN KEY (driver_id) REFERENCES drivers(driver_id)
 );
