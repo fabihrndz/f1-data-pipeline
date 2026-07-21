@@ -47,7 +47,6 @@ CREATE TABLE races (
     year_race YEAR,
     round INT,
     race_date DATE,
-    weather_condition VARCHAR(100),
     circuit_id VARCHAR(50),
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_races_circuits FOREIGN KEY (circuit_id) REFERENCES circuits(circuit_id) ON DELETE RESTRICT
@@ -60,7 +59,7 @@ CREATE TABLE results (
     driver_id VARCHAR(50),
     constructor_id VARCHAR(50),
     status_id INT,
-    grip_position SMALLINT,       -- Posición en parrilla (grid)
+    grid_position SMALLINT,       -- Posición en parrilla (grid)
     final_position SMALLINT,      -- Posición final
     points DECIMAL(5,2) DEFAULT 0.0,
     laps INT,                     -- Vueltas completadas
