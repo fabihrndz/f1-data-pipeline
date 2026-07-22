@@ -12,7 +12,9 @@ f1-data-pipeline/
 ├── core/
 │   └── database.py          # Conexion MySQL con logging
 ├── scripts/
-│   └── ingesters.py         # 8 funciones de ingesta ETL
+│   ├── ingesters.py         # 8 funciones de ingesta ETL
+│   └── cache.py             # Cache local de respuestas API (JSON)
+├── cache/                   # Cache de respuestas API (generado automaticamente, no versionado)
 ├── sql/
 │   ├── create_schema.sql    # DDL del modelo relacional
 │   └── queries.sql          # Vistas analiticas para Power BI
@@ -39,12 +41,45 @@ f1-data-pipeline/
 ## Desafios Tecnicos Resueltos
 
 - **Integridad relacional estricta:** Uso de `ON DUPLICATE KEY UPDATE` en lugar de `INSERT IGNORE` para garantizar consistencia.
-- **Rate limiting defensivo:** Mecanismos de reintento con backoff lineal y circuit breaker para codigos HTTP 429.
+- **Rate limiting defensivo:** Cache local de respuestas API en JSON con TTL configurable. Los datos historicos se cachean permanentemente; los de la temporada actual se refrescan diariamente. Reintentos con backoff exponencial para codigos HTTP 429.
 - **Manejo de datos incompletos:** Control de nulos para registros historicos sin telemetria moderna.
 - **Desbordamiento numerico:** Filtros defensivos en Python para outliers en tiempos de pit stops.
 - **Resumen de progreso:** Cada ingesta detecta registros existentes y retoma donde se quedo.
 
 ---
+
+### Cache Local
+
+El pipeline utiliza un sistema de cache en archivos JSON para evitar llamadas repetitivas a la API y prevenir errores de rate limiting (HTTP 429).
+
+**Estructura del cache:**
+```
+cache/
+├── catalog/       # Drivers, constructors, circuits, statuses (por pagina)
+├── races/         # Calendarios por anio (1950.json, 1951.json, ...)
+├── results/       # Resultados por carrera (2024-01.json, ...)
+├── qualifying/    # Clasificacion por carrera
+└── pitstops/      # Paradas en boxes por carrera
+```
+
+**Politica de frescura (TTL):**
+| Tipo de dato | TTL | Comportamiento |
+|-------------|-----|----------------|
+| Catalogos (drivers, constructors, circuits, statuses) | 7 dias | Solo se refrescan semanalmente |
+| Carreras historicas (anios anteriores al actual) | Sin expiracion | Descargadas una vez, se conservan permanentemente |
+| Datos de temporada actual | 1 dia | Se refrescan diariamente para capturar carreras nuevas |
+
+**Impacto en llamadas API:**
+| Escenario | Sin cache | Con cache |
+|-----------|-----------|-----------|
+| Primera ejecucion | ~2,300 llamadas | ~2,300 llamadas (llena el cache) |
+| Actualizacion semanal | ~2,170 llamadas | ~5-10 llamadas (solo carreras nuevas) |
+| Sin cambios | ~2,170 llamadas | 0 llamadas (todo desde cache) |
+
+**Limpiar el cache:**
+```bash
+python main.py --clear-cache
+```
 
 ## Instalacion y Configuracion
 
@@ -151,3 +186,4 @@ El archivo `sql/queries.sql` contiene 7 vistas analiticas disenadas para Power B
 - **requests** - Consumo de API REST
 - **mysql-connector-python** - Driver MySQL
 - **python-dotenv** - Gestion de variables de entorno
+- **Cache JSON local** - Persistencia de respuestas API para evitar rate limiting

@@ -3,6 +3,7 @@ import logging
 import sys
 
 from scripts import ingesters as ig
+from scripts.cache import clear_cache
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +55,10 @@ def main() -> None:
         "--list", action="store_true",
         help="Muestra las entidades disponibles y sale",
     )
+    group.add_argument(
+        "--clear-cache", action="store_true",
+        help="Elimina todo el cache local de la API",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -62,8 +67,13 @@ def main() -> None:
             print(f"  - {name}")
         sys.exit(0)
 
-    if not args.all and not args.entity:
-        parser.error("Se requiere --all, --entity o --list")
+    if not args.all and not args.entity and not args.clear_cache:
+        parser.error("Se requiere --all, --entity, --list o --clear-cache")
+
+    if args.clear_cache:
+        clear_cache()
+        logger.info("Cache eliminado correctamente.")
+        sys.exit(0)
 
     if args.all:
         logger.info("=== Ingesta completa iniciada ===")

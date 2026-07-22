@@ -2,17 +2,23 @@ import logging
 import time
 from datetime import datetime
 
-import requests
-
 from core.database import db_connection
+from scripts.cache import (
+    TTL_CATALOG,
+    TTL_RACE,
+    TTL_YEAR,
+    fetch_or_cache,
+)
 
 logger = logging.getLogger(__name__)
 
 API_BASE_URL = "https://api.jolpi.ca/ergast/f1"
-SLEEP_CATALOG = 1.5
-SLEEP_RACE = 3.0
-SLEEP_QUALIFYING = 3.5
-MAX_RETRIES_429 = 3
+SLEEP_CATALOG = 2.0
+SLEEP_RACE = 4.0
+SLEEP_YEAR = 5.0
+QUALIFYING_MIN_YEAR = 1994
+RESULTS_MIN_YEAR = 1950
+PITSTOPS_MIN_YEAR = 2010
 
 
 def ingest_all_drivers():
@@ -31,14 +37,14 @@ def ingest_all_drivers():
 
     try:
         while True:
+            cache_key = f"drivers_{offset}"
             url = f"{API_BASE_URL}/drivers.json?limit={limit}&offset={offset}"
-            response = requests.get(url)
+            data = fetch_or_cache(url, "catalog", cache_key, TTL_CATALOG)
 
-            if response.status_code != 200:
-                logger.error("Error en la API. Codigo de estado: %d", response.status_code)
+            if data is None:
+                logger.error("No se pudo obtener pagina de pilotos offset %d", offset)
                 break
 
-            data = response.json()
             drivers_list = data['MRData']['DriverTable']['Drivers']
 
             if not drivers_list:
@@ -62,8 +68,12 @@ def ingest_all_drivers():
                     d.get('nationality'),
                     d.get('dateOfBirth')
                 )
-                cursor.execute(sql, valores)
-                total_guardados += 1
+                try:
+                    cursor.execute(sql, valores)
+                    total_guardados += 1
+                except Exception as e:
+                    logger.error("Error al insertar piloto %s: %s", d.get('driverId'), e)
+                    continue
 
             conexion.commit()
             logger.info("Pasada completada: pilotos offset %d - %d", offset, offset + len(drivers_list))
@@ -93,14 +103,14 @@ def ingest_all_constructors():
 
     try:
         while True:
+            cache_key = f"constructors_{offset}"
             url = f"{API_BASE_URL}/constructors.json?limit={limit}&offset={offset}"
-            response = requests.get(url)
+            data = fetch_or_cache(url, "catalog", cache_key, TTL_CATALOG)
 
-            if response.status_code != 200:
-                logger.error("Error en la API. Codigo: %d", response.status_code)
+            if data is None:
+                logger.error("No se pudo obtener pagina de constructores offset %d", offset)
                 break
 
-            data = response.json()
             constructors = data['MRData']['ConstructorTable']['Constructors']
 
             if not constructors:
@@ -120,8 +130,12 @@ def ingest_all_constructors():
                     d.get('name'),
                     d.get('nationality')
                 )
-                cursor.execute(sql, valores)
-                total_new += 1
+                try:
+                    cursor.execute(sql, valores)
+                    total_new += 1
+                except Exception as e:
+                    logger.error("Error al insertar escuderia %s: %s", d.get('constructorId'), e)
+                    continue
 
             conexion.commit()
             logger.info("Pasada completada: constructores offset %d - %d", offset, offset + len(constructors))
@@ -151,14 +165,14 @@ def ingest_all_circuits():
 
     try:
         while True:
+            cache_key = f"circuits_{offset}"
             url = f"{API_BASE_URL}/circuits.json?limit={limit}&offset={offset}"
-            response = requests.get(url)
+            data = fetch_or_cache(url, "catalog", cache_key, TTL_CATALOG)
 
-            if response.status_code != 200:
-                logger.error("Error en la API. Codigo de estado: %d", response.status_code)
+            if data is None:
+                logger.error("No se pudo obtener pagina de circuitos offset %d", offset)
                 break
 
-            data = response.json()
             circuits = data['MRData']['CircuitTable']['Circuits']
 
             if not circuits:
@@ -186,8 +200,12 @@ def ingest_all_circuits():
                     c.get('Location', {}).get('long'),
                     c.get('url')
                 )
-                cursor.execute(sql, valores)
-                total_procesados += 1
+                try:
+                    cursor.execute(sql, valores)
+                    total_procesados += 1
+                except Exception as e:
+                    logger.error("Error al insertar circuito %s: %s", c.get('circuitId'), e)
+                    continue
 
             conexion.commit()
             logger.info("Pasada completada: circuitos offset %d - %d", offset, offset + len(circuits))
@@ -212,22 +230,33 @@ def ingest_all_races():
     anio_actual = datetime.now().year
     total_new = 0
 
+    logger.info("Comprobando progreso previo en races...")
+    cursor.execute("SELECT year_race, COUNT(*) FROM races GROUP BY year_race")
+    counts_por_anio = {row[0]: row[1] for row in cursor.fetchall()}
+
     logger.info("Sincronizando calendarios historicos (1950 - %d)...", anio_actual)
 
     try:
         for year in range(1950, anio_actual + 1):
+            ttl = TTL_YEAR if year == anio_actual else None
             url = f"{API_BASE_URL}/{year}.json"
-            response = requests.get(url)
+            data = fetch_or_cache(url, "races", str(year), ttl)
 
-            if response.status_code != 200:
-                logger.warning("Error al obtener el ano %d. Codigo: %d", year, response.status_code)
-                time.sleep(2.0)
+            if data is None:
+                logger.warning("No se pudo obtener ano %d. Saltando.", year)
                 continue
 
-            data = response.json()
             races = data['MRData']['RaceTable']['Races']
 
             if not races:
+                continue
+
+            api_total = len(races)
+            db_count = counts_por_anio.get(year, 0)
+
+            if db_count >= api_total:
+                logger.info("Ano %d ya completo en DB (%d/%d). Saltando insercion.", year, db_count, api_total)
+                time.sleep(SLEEP_CATALOG)
                 continue
 
             sql = """
@@ -253,17 +282,21 @@ def ingest_all_races():
                 )
 
                 if valores[5]:
-                    cursor.execute(sql, valores)
-                    total_new += 1
+                    try:
+                        cursor.execute(sql, valores)
+                        total_new += 1
+                    except Exception as e:
+                        logger.error("Error al insertar carrera %s: %s", race_id, e)
+                        continue
 
             conexion.commit()
-            logger.info("Temporada %d sincronizada.", year)
+            logger.info("Temporada %d sincronizada (%d carreras).", year, api_total)
             time.sleep(SLEEP_CATALOG)
     finally:
         cursor.close()
         conexion.close()
 
-    logger.info("Sincronizacion de carreras finalizada. Total: %d", total_new)
+    logger.info("Sincronizacion de carreras finalizada. Registros insertados: %d", total_new)
 
 
 def ingest_all_statuses():
@@ -282,14 +315,14 @@ def ingest_all_statuses():
 
     try:
         while True:
+            cache_key = f"status_{offset}"
             url = f"{API_BASE_URL}/status.json?limit={limit}&offset={offset}"
-            response = requests.get(url)
+            data = fetch_or_cache(url, "catalog", cache_key, TTL_CATALOG)
 
-            if response.status_code != 200:
-                logger.error("Error en la API. Codigo de estado: %d", response.status_code)
+            if data is None:
+                logger.error("No se pudo obtener pagina de estados offset %d", offset)
                 break
 
-            data = response.json()
             status_list = data['MRData']['StatusTable']['Status']
 
             if not status_list:
@@ -311,6 +344,9 @@ def ingest_all_statuses():
                     total_procesados += 1
                 except (ValueError, TypeError) as parse_err:
                     logger.warning("Problema con formato de estado: %s", parse_err)
+                    continue
+                except Exception as e:
+                    logger.error("Error al insertar estado %s: %s", s.get('statusId'), e)
                     continue
 
             conexion.commit()
@@ -334,23 +370,28 @@ def ingest_all_results():
         return
 
     logger.info("Comprobando progreso previo en results...")
-    cursor.execute("SELECT DISTINCT race_id FROM results")
-    carreras_procesadas = {row[0] for row in cursor.fetchall()}
+    cursor.execute("SELECT race_id, COUNT(*) FROM results GROUP BY race_id")
+    counts_existentes = {row[0]: row[1] for row in cursor.fetchall()}
 
-    cursor.execute("SELECT year_race, round, race_id FROM races ORDER BY year_race ASC, round ASC")
-    todas_las_carreras = cursor.fetchall()
+    cursor.execute(
+        "SELECT race_id, year_race, round FROM races WHERE year_race >= %s ORDER BY year_race, round",
+        (RESULTS_MIN_YEAR,),
+    )
+    todas_carreras = cursor.fetchall()
 
-    carreras_pendientes = [c for c in todas_las_carreras if c[2] not in carreras_procesadas]
+    total_carreras = len(todas_carreras)
+    con_datos = sum(1 for rid, _, _ in todas_carreras if counts_existentes.get(rid, 0) > 0)
 
-    logger.info("Results: %d guardadas, %d pendientes", len(carreras_procesadas), len(carreras_pendientes))
+    logger.info("Results: %d carreras totales, %d ya con datos en DB", total_carreras, con_datos)
 
-    if not carreras_pendientes:
-        logger.info("Todas las carreras estan sincronizadas en results.")
+    if not todas_carreras:
+        logger.info("No hay carreras en la tabla races.")
         cursor.close()
         conexion.close()
         return
 
     total_procesados = 0
+    total_actualizados = 0
     sql = """
         INSERT INTO results
         (race_id, driver_id, constructor_id, status_id, grid_position, final_position, points, laps, fastest_lap_rank, fastest_lap_time, is_podium)
@@ -370,73 +411,88 @@ def ingest_all_results():
             is_podium = VALUES(is_podium);
     """
 
+    anio_actual = datetime.now().year
+    current_year = None
     try:
-        for year, round_num, race_id in carreras_pendientes:
+        for idx, (race_id, year, round_num) in enumerate(todas_carreras, 1):
+            if year != current_year:
+                if current_year is not None:
+                    time.sleep(SLEEP_YEAR)
+                current_year = year
+
+            ttl = TTL_RACE if year == anio_actual else None
             url = f"{API_BASE_URL}/{year}/{round_num}/results.json"
+            data = fetch_or_cache(url, "results", race_id, ttl)
 
-            reintentos_429 = 0
-            while True:
-                response = requests.get(url)
+            if data is None:
+                logger.warning("[%d/%d] No se pudieron obtener resultados de %s. Saltando.", idx, total_carreras, race_id)
+                time.sleep(SLEEP_RACE)
+                continue
 
-                if response.status_code == 429:
-                    reintentos_429 += 1
-                    tiempo_espera = 30.0 if reintentos_429 < 3 else 60.0
-                    logger.warning("Bloqueo 429 en %s (intento %d). Esperando %.0fs...", race_id, reintentos_429, tiempo_espera)
-                    time.sleep(tiempo_espera)
-                    continue
-
-                if response.status_code != 200:
-                    logger.warning("Error en %s. Codigo: %d", race_id, response.status_code)
-                    break
-
-                data = response.json()
+            try:
                 races_list = data['MRData']['RaceTable']['Races']
                 if not races_list:
-                    break
+                    time.sleep(SLEEP_RACE)
+                    continue
+                results = races_list[0].get('Results', [])
+            except (KeyError, IndexError):
+                time.sleep(SLEEP_RACE)
+                continue
 
-                results = races_list[0]['Results']
+            api_count = len(results)
+            db_count = counts_existentes.get(race_id, 0)
 
-                for r in results:
-                    try:
-                        final_pos = int(r.get('position', 0))
-                    except (ValueError, TypeError):
-                        final_pos = None
+            if api_count == db_count and api_count > 0:
+                if idx % 100 == 0:
+                    logger.info("[%d/%d] Results: verificado %s (%d registros OK)", idx, total_carreras, race_id, api_count)
+                time.sleep(SLEEP_RACE)
+                continue
 
-                    fastest_lap_obj = r.get('FastestLap', {})
-                    try:
-                        fl_rank = int(fastest_lap_obj.get('rank', 0)) if fastest_lap_obj else None
-                    except (ValueError, TypeError):
-                        fl_rank = None
+            for r in results:
+                try:
+                    final_pos = int(r.get('position', 0))
+                except (ValueError, TypeError):
+                    final_pos = None
 
-                    fl_time = fastest_lap_obj.get('Time', {}).get('time') if fastest_lap_obj else None
+                fastest_lap_obj = r.get('FastestLap', {})
+                try:
+                    fl_rank = int(fastest_lap_obj.get('rank', 0)) if fastest_lap_obj else None
+                except (ValueError, TypeError):
+                    fl_rank = None
 
-                    valores = (
-                        race_id,
-                        r.get('Driver', {}).get('driverId'),
-                        r.get('Constructor', {}).get('constructorId'),
-                        r.get('status'),
-                        int(r.get('grid', 0)),
-                        final_pos,
-                        float(r.get('points', 0)),
-                        int(r.get('laps', 0)),
-                        fl_rank,
-                        fl_time,
-                        True if final_pos in [1, 2, 3] else False
-                    )
+                fl_time = fastest_lap_obj.get('Time', {}).get('time') if fastest_lap_obj else None
 
+                valores = (
+                    race_id,
+                    r.get('Driver', {}).get('driverId'),
+                    r.get('Constructor', {}).get('constructorId'),
+                    r.get('status'),
+                    int(r.get('grid', 0)),
+                    final_pos,
+                    float(r.get('points', 0)),
+                    int(r.get('laps', 0)),
+                    fl_rank,
+                    fl_time,
+                    True if final_pos in [1, 2, 3] else False
+                )
+
+                try:
                     cursor.execute(sql, valores)
                     total_procesados += 1
+                except Exception as e:
+                    logger.error("Error al insertar resultado en %s: %s", race_id, e)
+                    continue
 
-                conexion.commit()
-                logger.info("Resultados guardados: %s", race_id)
-                break
-
+            conexion.commit()
+            counts_existentes[race_id] = api_count
+            total_actualizados += 1
+            logger.info("[%d/%d] Results guardados: %s (API: %d, DB previo: %d)", idx, total_carreras, race_id, api_count, db_count)
             time.sleep(SLEEP_RACE)
     finally:
         cursor.close()
         conexion.close()
 
-    logger.info("Sincronizacion de results finalizada. Registros anadidos: %d", total_procesados)
+    logger.info("Sincronizacion de results finalizada. Carreras actualizadas: %d, Registros insertados: %d", total_actualizados, total_procesados)
 
 
 def ingest_qualifying():
@@ -448,23 +504,28 @@ def ingest_qualifying():
         return
 
     logger.info("Comprobando progreso previo en qualifying...")
-    cursor.execute("SELECT DISTINCT race_id FROM qualifying")
-    carreras_procesadas = {row[0] for row in cursor.fetchall()}
+    cursor.execute("SELECT race_id, COUNT(*) FROM qualifying GROUP BY race_id")
+    counts_existentes = {row[0]: row[1] for row in cursor.fetchall()}
 
-    cursor.execute("SELECT year_race, round, race_id FROM races ORDER BY year_race ASC, round ASC")
-    todas_las_carreras = cursor.fetchall()
+    cursor.execute(
+        "SELECT race_id, year_race, round FROM races WHERE year_race >= %s ORDER BY year_race, round",
+        (QUALIFYING_MIN_YEAR,),
+    )
+    todas_carreras = cursor.fetchall()
 
-    carreras_pendientes = [c for c in todas_las_carreras if c[2] not in carreras_procesadas]
+    total_carreras = len(todas_carreras)
+    con_datos = sum(1 for rid, _, _ in todas_carreras if counts_existentes.get(rid, 0) > 0)
 
-    logger.info("Qualifying: %d guardadas, %d pendientes", len(carreras_procesadas), len(carreras_pendientes))
+    logger.info("Qualifying: %d carreras totales, %d ya con datos en DB", total_carreras, con_datos)
 
-    if not carreras_pendientes:
-        logger.info("Tabla qualifying sincronizada.")
+    if not todas_carreras:
+        logger.info("No hay carreras desde %d en la tabla races.", QUALIFYING_MIN_YEAR)
         cursor.close()
         conexion.close()
         return
 
     total_procesados = 0
+    total_actualizados = 0
 
     sql = """
         INSERT INTO qualifying
@@ -478,78 +539,75 @@ def ingest_qualifying():
             q3 = VALUES(q3);
     """
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
+    anio_actual = datetime.now().year
+    current_year = None
     try:
-        for year, round_num, race_id in carreras_pendientes:
+        for idx, (race_id, year, round_num) in enumerate(todas_carreras, 1):
+            if year != current_year:
+                if current_year is not None:
+                    time.sleep(SLEEP_YEAR)
+                current_year = year
+
+            ttl = TTL_RACE if year == anio_actual else None
             url = f"{API_BASE_URL}/{year}/{round_num}/qualifying.json"
+            data = fetch_or_cache(url, "qualifying", race_id, ttl)
 
-            reintentos_429 = 0
-            abortar_por_bloqueo = False
+            if data is None:
+                logger.warning("[%d/%d] No se pudo obtener clasificacion de %s. Saltando.", idx, total_carreras, race_id)
+                time.sleep(SLEEP_RACE)
+                continue
 
-            while True:
-                response = requests.get(url, headers=headers)
-
-                if response.status_code == 429:
-                    reintentos_429 += 1
-                    if reintentos_429 > MAX_RETRIES_429:
-                        logger.error("API bloqueada prolongadamente en %s. Deteniendo.", race_id)
-                        abortar_por_bloqueo = True
-                        break
-
-                    tiempo_espera = 30.0 if reintentos_429 < 2 else 60.0
-                    logger.warning("Bloqueo 429 en %s (intento %d/%d). Esperando %.0fs...", race_id, reintentos_429, MAX_RETRIES_429, tiempo_espera)
-                    time.sleep(tiempo_espera)
+            try:
+                races_list = data['MRData']['RaceTable']['Races']
+                if not races_list:
+                    time.sleep(SLEEP_RACE)
                     continue
+                qualifying_results = races_list[0].get('QualifyingResults', [])
+            except (KeyError, IndexError):
+                time.sleep(SLEEP_RACE)
+                continue
 
-                if response.status_code != 200:
-                    logger.warning("Error en clasificacion %s. Codigo: %d", race_id, response.status_code)
-                    break
+            api_count = len(qualifying_results)
+            db_count = counts_existentes.get(race_id, 0)
 
-                data = response.json()
+            if api_count == db_count and api_count > 0:
+                if idx % 100 == 0:
+                    logger.info("[%d/%d] Qualifying: verificado %s (%d registros OK)", idx, total_carreras, race_id, api_count)
+                time.sleep(SLEEP_RACE)
+                continue
+
+            for q in qualifying_results:
                 try:
-                    races_list = data['MRData']['RaceTable']['Races']
-                    if not races_list:
-                        logger.info("Sin datos de clasificacion para: %s", race_id)
-                        break
-                    qualifying_results = races_list[0].get('QualifyingResults', [])
-                except (KeyError, IndexError):
-                    logger.warning("Estructura inesperada en: %s", race_id)
-                    break
+                    posicion_final = int(q.get('position', 0))
+                except (ValueError, TypeError):
+                    posicion_final = None
 
-                for q in qualifying_results:
-                    try:
-                        posicion_final = int(q.get('position', 0))
-                    except (ValueError, TypeError):
-                        posicion_final = None
-
-                    valores = (
-                        race_id,
-                        q.get('Driver', {}).get('driverId'),
-                        q.get('Constructor', {}).get('constructorId'),
-                        posicion_final,
-                        q.get('Q1'),
-                        q.get('Q2'),
-                        q.get('Q3')
-                    )
+                valores = (
+                    race_id,
+                    q.get('Driver', {}).get('driverId'),
+                    q.get('Constructor', {}).get('constructorId'),
+                    posicion_final,
+                    q.get('Q1'),
+                    q.get('Q2'),
+                    q.get('Q3')
+                )
+                try:
                     cursor.execute(sql, valores)
                     total_procesados += 1
+                except Exception as e:
+                    logger.error("Error al insertar clasificacion en %s: %s", race_id, e)
+                    continue
 
-                conexion.commit()
-                logger.info("Clasificacion guardada: %s", race_id)
-                break
-
-            if abortar_por_bloqueo:
-                break
-
-            time.sleep(SLEEP_QUALIFYING)
+            conexion.commit()
+            counts_existentes[race_id] = api_count
+            total_actualizados += 1
+            logger.info("[%d/%d] Qualifying guardados: %s (API: %d, DB previo: %d)", idx, total_carreras, race_id, api_count, db_count)
+            time.sleep(SLEEP_RACE)
     finally:
         cursor.close()
         conexion.close()
 
-    logger.info("Sincronizacion de qualifying finalizada. Registros anadidos: %d", total_procesados)
+    logger.info("Sincronizacion de qualifying finalizada. Carreras actualizadas: %d, Registros insertados: %d", total_actualizados, total_procesados)
 
 
 def ingest_pit_stops():
@@ -560,20 +618,30 @@ def ingest_pit_stops():
         logger.error("Error de conexion en pit_stops: %s", e)
         return
 
+    logger.info("Comprobando progreso previo en pit_stops...")
     cursor.execute("SELECT DISTINCT race_id FROM pit_stops")
-    carreras_procesadas = {row[0] for row in cursor.fetchall()}
+    existentes = {row[0] for row in cursor.fetchall()}
 
-    cursor.execute("""
-        SELECT year_race, round, race_id
-        FROM races
-        WHERE year_race >= 2010
-        ORDER BY year_race ASC, round ASC
-    """)
-    todas_las_carreras = cursor.fetchall()
+    cursor.execute("SELECT MIN(year_race) FROM races WHERE year_race >= %s", (PITSTOPS_MIN_YEAR,))
+    min_year_row = cursor.fetchone()
+    if not min_year_row or min_year_row[0] is None:
+        logger.info("No hay carreras desde %d en la tabla races.", PITSTOPS_MIN_YEAR)
+        cursor.close()
+        conexion.close()
+        return
 
-    carreras_pendientes = [c for c in todas_las_carreras if c[2] not in carreras_procesadas]
+    anio_actual = datetime.now().year
+    carreras_pendientes = []
 
-    logger.info("Pit Stops: %d pendientes", len(carreras_pendientes))
+    for year in range(PITSTOPS_MIN_YEAR, anio_actual + 1):
+        cursor.execute("SELECT race_id FROM races WHERE year_race = %s ORDER BY round ASC", (year,))
+        race_ids_anio = [row[0] for row in cursor.fetchall()]
+        if not race_ids_anio:
+            continue
+        pendientes_anio = [rid for rid in race_ids_anio if rid not in existentes]
+        carreras_pendientes.extend([(year, rid) for rid in pendientes_anio])
+
+    logger.info("Pit Stops: %d en DB, %d pendientes (%d-%d)", len(existentes), len(carreras_pendientes), PITSTOPS_MIN_YEAR, anio_actual)
 
     if not carreras_pendientes:
         logger.info("Tabla pit_stops sincronizada.")
@@ -587,32 +655,33 @@ def ingest_pit_stops():
         ON DUPLICATE KEY UPDATE lap = VALUES(lap), duration = VALUES(duration);
     """
 
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
     try:
-        for year, round_num, race_id in carreras_pendientes:
+        current_year = None
+        for year, race_id in carreras_pendientes:
+            if year != current_year:
+                if current_year is not None:
+                    time.sleep(SLEEP_YEAR)
+                current_year = year
+
+            ttl = TTL_RACE if year == anio_actual else None
+            round_num = int(race_id.split('-')[1])
             url = f"{API_BASE_URL}/{year}/{round_num}/pitstops.json?limit=100"
 
-            try:
-                response = requests.get(url, headers=headers)
-            except Exception as e:
-                logger.warning("Error de red en %s: %s", race_id, e)
+            data = fetch_or_cache(url, "pitstops", race_id, ttl)
+
+            if data is None:
+                logger.warning("No se pudieron obtener paradas de %s. Saltando.", race_id)
+                time.sleep(SLEEP_RACE)
                 continue
 
-            if response.status_code == 429:
-                logger.error("Bloqueo 429 en %s. Deteniendo.", race_id)
-                break
-
-            if response.status_code != 200:
-                continue
-
-            data = response.json()
             try:
                 races_list = data['MRData']['RaceTable']['Races']
                 if not races_list:
+                    time.sleep(SLEEP_RACE)
                     continue
                 pit_stops_list = races_list[0].get('PitStops', [])
             except (KeyError, IndexError):
+                time.sleep(SLEEP_RACE)
                 continue
 
             for p in pit_stops_list:
@@ -634,7 +703,7 @@ def ingest_pit_stops():
             if pit_stops_list:
                 logger.info("Pit Stops guardados: %s (%d paradas)", race_id, len(pit_stops_list))
 
-            time.sleep(SLEEP_QUALIFYING)
+            time.sleep(SLEEP_RACE)
     finally:
         cursor.close()
         conexion.close()
