@@ -255,8 +255,8 @@ def ingest_all_races():
             db_count = counts_por_anio.get(year, 0)
 
             if db_count >= api_total:
-                logger.info("Ano %d ya completo en DB (%d/%d). Saltando insercion.", year, db_count, api_total)
-                time.sleep(SLEEP_CATALOG)
+                if year % 50 == 0:
+                    logger.info("Ano %d ya completo en DB (%d/%d). Saltando.", year, db_count, api_total)
                 continue
 
             sql = """
@@ -370,28 +370,26 @@ def ingest_all_results():
         return
 
     logger.info("Comprobando progreso previo en results...")
-    cursor.execute("SELECT race_id, COUNT(*) FROM results GROUP BY race_id")
-    counts_existentes = {row[0]: row[1] for row in cursor.fetchall()}
+    cursor.execute("SELECT DISTINCT race_id FROM results")
+    carreras_procesadas = {row[0] for row in cursor.fetchall()}
 
     cursor.execute(
-        "SELECT race_id, year_race, round FROM races WHERE year_race >= %s ORDER BY year_race, round",
+        "SELECT year_race, round, race_id FROM races WHERE year_race >= %s ORDER BY year_race ASC, round ASC",
         (RESULTS_MIN_YEAR,),
     )
-    todas_carreras = cursor.fetchall()
+    todas_las_carreras = cursor.fetchall()
 
-    total_carreras = len(todas_carreras)
-    con_datos = sum(1 for rid, _, _ in todas_carreras if counts_existentes.get(rid, 0) > 0)
+    carreras_pendientes = [(y, r, rid) for y, r, rid in todas_las_carreras if rid not in carreras_procesadas]
 
-    logger.info("Results: %d carreras totales, %d ya con datos en DB", total_carreras, con_datos)
+    logger.info("Results: %d guardadas, %d pendientes", len(carreras_procesadas), len(carreras_pendientes))
 
-    if not todas_carreras:
-        logger.info("No hay carreras en la tabla races.")
+    if not carreras_pendientes:
+        logger.info("Todas las carreras ya estan sincronizadas en results.")
         cursor.close()
         conexion.close()
         return
 
     total_procesados = 0
-    total_actualizados = 0
     sql = """
         INSERT INTO results
         (race_id, driver_id, constructor_id, status_id, grid_position, final_position, points, laps, fastest_lap_rank, fastest_lap_time, is_podium)
@@ -414,7 +412,7 @@ def ingest_all_results():
     anio_actual = datetime.now().year
     current_year = None
     try:
-        for idx, (race_id, year, round_num) in enumerate(todas_carreras, 1):
+        for idx, (year, round_num, race_id) in enumerate(carreras_pendientes, 1):
             if year != current_year:
                 if current_year is not None:
                     time.sleep(SLEEP_YEAR)
@@ -425,7 +423,7 @@ def ingest_all_results():
             data = fetch_or_cache(url, "results", race_id, ttl)
 
             if data is None:
-                logger.warning("[%d/%d] No se pudieron obtener resultados de %s. Saltando.", idx, total_carreras, race_id)
+                logger.warning("[%d/%d] No se pudieron obtener resultados de %s. Saltando.", idx, len(carreras_pendientes), race_id)
                 time.sleep(SLEEP_RACE)
                 continue
 
@@ -436,15 +434,6 @@ def ingest_all_results():
                     continue
                 results = races_list[0].get('Results', [])
             except (KeyError, IndexError):
-                time.sleep(SLEEP_RACE)
-                continue
-
-            api_count = len(results)
-            db_count = counts_existentes.get(race_id, 0)
-
-            if api_count == db_count and api_count > 0:
-                if idx % 100 == 0:
-                    logger.info("[%d/%d] Results: verificado %s (%d registros OK)", idx, total_carreras, race_id, api_count)
                 time.sleep(SLEEP_RACE)
                 continue
 
@@ -484,15 +473,13 @@ def ingest_all_results():
                     continue
 
             conexion.commit()
-            counts_existentes[race_id] = api_count
-            total_actualizados += 1
-            logger.info("[%d/%d] Results guardados: %s (API: %d, DB previo: %d)", idx, total_carreras, race_id, api_count, db_count)
+            logger.info("[%d/%d] Results guardados: %s", idx, len(carreras_pendientes), race_id)
             time.sleep(SLEEP_RACE)
     finally:
         cursor.close()
         conexion.close()
 
-    logger.info("Sincronizacion de results finalizada. Carreras actualizadas: %d, Registros insertados: %d", total_actualizados, total_procesados)
+    logger.info("Sincronizacion de results finalizada. Registros insertados: %d", total_procesados)
 
 
 def ingest_qualifying():
@@ -504,28 +491,26 @@ def ingest_qualifying():
         return
 
     logger.info("Comprobando progreso previo en qualifying...")
-    cursor.execute("SELECT race_id, COUNT(*) FROM qualifying GROUP BY race_id")
-    counts_existentes = {row[0]: row[1] for row in cursor.fetchall()}
+    cursor.execute("SELECT DISTINCT race_id FROM qualifying")
+    carreras_procesadas = {row[0] for row in cursor.fetchall()}
 
     cursor.execute(
-        "SELECT race_id, year_race, round FROM races WHERE year_race >= %s ORDER BY year_race, round",
+        "SELECT year_race, round, race_id FROM races WHERE year_race >= %s ORDER BY year_race ASC, round ASC",
         (QUALIFYING_MIN_YEAR,),
     )
-    todas_carreras = cursor.fetchall()
+    todas_las_carreras = cursor.fetchall()
 
-    total_carreras = len(todas_carreras)
-    con_datos = sum(1 for rid, _, _ in todas_carreras if counts_existentes.get(rid, 0) > 0)
+    carreras_pendientes = [(y, r, rid) for y, r, rid in todas_las_carreras if rid not in carreras_procesadas]
 
-    logger.info("Qualifying: %d carreras totales, %d ya con datos en DB", total_carreras, con_datos)
+    logger.info("Qualifying: %d guardadas, %d pendientes", len(carreras_procesadas), len(carreras_pendientes))
 
-    if not todas_carreras:
-        logger.info("No hay carreras desde %d en la tabla races.", QUALIFYING_MIN_YEAR)
+    if not carreras_pendientes:
+        logger.info("Tabla qualifying sincronizada.")
         cursor.close()
         conexion.close()
         return
 
     total_procesados = 0
-    total_actualizados = 0
 
     sql = """
         INSERT INTO qualifying
@@ -542,7 +527,7 @@ def ingest_qualifying():
     anio_actual = datetime.now().year
     current_year = None
     try:
-        for idx, (race_id, year, round_num) in enumerate(todas_carreras, 1):
+        for idx, (year, round_num, race_id) in enumerate(carreras_pendientes, 1):
             if year != current_year:
                 if current_year is not None:
                     time.sleep(SLEEP_YEAR)
@@ -553,7 +538,7 @@ def ingest_qualifying():
             data = fetch_or_cache(url, "qualifying", race_id, ttl)
 
             if data is None:
-                logger.warning("[%d/%d] No se pudo obtener clasificacion de %s. Saltando.", idx, total_carreras, race_id)
+                logger.warning("[%d/%d] No se pudo obtener clasificacion de %s. Saltando.", idx, len(carreras_pendientes), race_id)
                 time.sleep(SLEEP_RACE)
                 continue
 
@@ -564,15 +549,6 @@ def ingest_qualifying():
                     continue
                 qualifying_results = races_list[0].get('QualifyingResults', [])
             except (KeyError, IndexError):
-                time.sleep(SLEEP_RACE)
-                continue
-
-            api_count = len(qualifying_results)
-            db_count = counts_existentes.get(race_id, 0)
-
-            if api_count == db_count and api_count > 0:
-                if idx % 100 == 0:
-                    logger.info("[%d/%d] Qualifying: verificado %s (%d registros OK)", idx, total_carreras, race_id, api_count)
                 time.sleep(SLEEP_RACE)
                 continue
 
@@ -599,15 +575,13 @@ def ingest_qualifying():
                     continue
 
             conexion.commit()
-            counts_existentes[race_id] = api_count
-            total_actualizados += 1
-            logger.info("[%d/%d] Qualifying guardados: %s (API: %d, DB previo: %d)", idx, total_carreras, race_id, api_count, db_count)
+            logger.info("[%d/%d] Qualifying guardados: %s", idx, len(carreras_pendientes), race_id)
             time.sleep(SLEEP_RACE)
     finally:
         cursor.close()
         conexion.close()
 
-    logger.info("Sincronizacion de qualifying finalizada. Carreras actualizadas: %d, Registros insertados: %d", total_actualizados, total_procesados)
+    logger.info("Sincronizacion de qualifying finalizada. Registros insertados: %d", total_procesados)
 
 
 def ingest_pit_stops():

@@ -127,3 +127,79 @@ GROUP BY d.driver_id, d.first_name, d.last_name
 HAVING total_races >= 50
 ORDER BY avg_positions_gained DESC
 LIMIT 15;
+
+
+-- ============================================================================
+-- VISTAS PARA POWER BI - TIEMPOS CONVERTIDOS
+-- ============================================================================
+-- Estas vistas convierten los tiempos de texto (M:SS.mmm) a segundos decimales
+-- para que Power BI pueda realizar operaciones numericas con ellos.
+-- ============================================================================
+
+
+-- 8. VISTA QUALIFYING - TIEMPOS EN SEGUNDOS DECIMALES
+-- ============================================================================
+-- Convierte q1, q2, q3 de texto "M:SS.mmm" a decimal (segundos totales)
+-- Ejemplo: "1:30.031" -> 90.031
+-- ============================================================================
+CREATE OR REPLACE VIEW v_qualifying AS
+SELECT
+    q.qualifying_id,
+    q.race_id,
+    q.driver_id,
+    q.constructor_id,
+    q.position,
+    q.q1,
+    q.q2,
+    q.q3,
+    CASE
+        WHEN q.q1 IS NULL OR q.q1 = '' THEN NULL
+        ELSE CAST(
+            CAST(SUBSTRING_INDEX(q.q1, ':', 1) AS UNSIGNED) * 60
+            + CAST(SUBSTRING_INDEX(q.q1, ':', -1) AS DECIMAL(10,3))
+        AS DECIMAL(10,3))
+    END AS q1_seconds,
+    CASE
+        WHEN q.q2 IS NULL OR q.q2 = '' THEN NULL
+        ELSE CAST(
+            CAST(SUBSTRING_INDEX(q.q2, ':', 1) AS UNSIGNED) * 60
+            + CAST(SUBSTRING_INDEX(q.q2, ':', -1) AS DECIMAL(10,3))
+        AS DECIMAL(10,3))
+    END AS q2_seconds,
+    CASE
+        WHEN q.q3 IS NULL OR q.q3 = '' THEN NULL
+        ELSE CAST(
+            CAST(SUBSTRING_INDEX(q.q3, ':', 1) AS UNSIGNED) * 60
+            + CAST(SUBSTRING_INDEX(q.q3, ':', -1) AS DECIMAL(10,3))
+        AS DECIMAL(10,3))
+    END AS q3_seconds
+FROM qualifying q;
+
+
+-- 9. VISTA RESULTS - FASTEST LAP TIME EN SEGUNDOS DECIMALES
+-- ============================================================================
+-- Convierte fastest_lap_time de texto "M:SS.mmm" a decimal (segundos totales)
+-- Ejemplo: "1:32.608" -> 92.608
+-- ============================================================================
+CREATE OR REPLACE VIEW v_results AS
+SELECT
+    res.result_id,
+    res.race_id,
+    res.driver_id,
+    res.constructor_id,
+    res.status_id,
+    res.grid_position,
+    res.final_position,
+    res.points,
+    res.laps,
+    res.fastest_lap_rank,
+    res.fastest_lap_time,
+    res.is_podium,
+    CASE
+        WHEN res.fastest_lap_time IS NULL OR res.fastest_lap_time = '' THEN NULL
+        ELSE CAST(
+            CAST(SUBSTRING_INDEX(res.fastest_lap_time, ':', 1) AS UNSIGNED) * 60
+            + CAST(SUBSTRING_INDEX(res.fastest_lap_time, ':', -1) AS DECIMAL(10,3))
+        AS DECIMAL(10,3))
+    END AS fastest_lap_seconds
+FROM results res;

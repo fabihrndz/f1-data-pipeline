@@ -55,9 +55,12 @@ def load_cache(entity, key):
         return None
 
 
+TTL_FOREVER = 10 * 365 * 24 * 3600
+
+
 def is_cache_fresh(entity, key, ttl=None):
     if ttl is None:
-        ttl = TTL_RACE
+        ttl = TTL_FOREVER
     path = cache_path(entity, key)
     if not os.path.exists(path):
         return False
